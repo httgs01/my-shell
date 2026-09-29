@@ -1,0 +1,165 @@
+---
+- name: Configure Ubuntu shells
+  hosts: shell_hosts
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars.yml
+  vars:
+    starship_targets:
+      x86_64: x86_64-unknown-linux-musl
+      aarch64: aarch64-unknown-linux-musl
+    starship_archive: "starship-{{ starship_targets[ansible_facts['architecture']] }}.tar.gz"
+    starship_release_url: "https://github.com/starship/starship/releases/download/v{{ starship_version }}"
+
+  pre_tasks:
+    - name: Check supported platform
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['architecture'] in starship_targets
+        fail_msg: "This playbook supports Ubuntu on x86_64 and aarch64."
+
+    - name: Read local accounts
+      ansible.builtin.getent:
+        database: passwd
+        service: files
+
+    - name: Initialize selected accounts
+      ansible.builtin.set_fact:
+        shell_accounts: []
+
+    - name: Select existing login accounts
+      ansible.builtin.set_fact:
+        shell_accounts: >-
+          {{ shell_accounts + [{'name': item.key, 'group': item.value[2],
+                                'home': item.value[4]}] }}
+      loop: "{{ ansible_facts['getent_passwd'] | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when:
+        - item.key not in shell_excluded_users
+        - >-
+          (shell_users | length > 0 and item.key in shell_users) or
+          (shell_users | length == 0 and
+           (item.key == 'root' or
+            (item.value[1] | int >= shell_uid_min | int and
+             item.value[1] | int <= shell_uid_max | int)) and
+           (item.value[5] | basename) not in ['nologin', 'false', 'sync', 'halt', 'shutdown'])
+
+    - name: Validate requested accounts
+      ansible.builtin.assert:
+        that:
+          - shell_users | difference(ansible_facts['getent_passwd'].keys() | list) | length == 0
+        fail_msg: "shell_users must contain existing local accounts."
+
+    - name: Validate home paths
+      ansible.builtin.assert:
+        that:
+          - item.home.startswith('/')
+          - item.home not in ['/', '/nonexistent', '/dev/null']
+      loop: "{{ shell_accounts }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Show selected users
+      ansible.builtin.debug:
+        msg: "Selected users: {{ shell_accounts | map(attribute='name') | join(', ') }}"
+
+  tasks:
+    - name: Install shell packages
+      ansible.builtin.apt:
+        name:
+          - acl
+          - ca-certificates
+          - git
+          - sudo
+          - zsh
+          - fzf
+          - zsh-autosuggestions
+          - zsh-syntax-highlighting
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Inspect installed Starship
+      ansible.builtin.command:
+        argv: [/usr/local/bin/starship, --version]
+      register: starship_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Install requested Starship version
+      when: >-
+        starship_installed.rc != 0 or
+        (starship_installed.stdout_lines | first | default('')) != 'starship ' ~ starship_version
+      block:
+        - name: Create download cache
+          ansible.builtin.file:
+            path: /var/cache/my-shell
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Download and verify Starship release
+          ansible.builtin.get_url:
+            url: "{{ starship_release_url }}/{{ starship_archive }}"
+            dest: "/var/cache/my-shell/{{ starship_version }}-{{ starship_archive }}"
+            checksum: "sha256:{{ starship_release_url }}/{{ starship_archive }}.sha256"
+            owner: root
+            group: root
+            mode: "0644"
+          when: not ansible_check_mode
+
+        - name: Ensure system executable directory exists
+          ansible.builtin.file:
+            path: /usr/local/bin
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Extract Starship binary
+          ansible.builtin.unarchive:
+            src: "/var/cache/my-shell/{{ starship_version }}-{{ starship_archive }}"
+            dest: /usr/local/bin
+            remote_src: true
+            include: [starship]
+            owner: root
+            group: root
+            mode: "0755"
+          when: not ansible_check_mode
+
+    - name: Configure each existing user
+      ansible.builtin.include_tasks: tasks/user.yml
+      loop: "{{ shell_accounts }}"
+      loop_control:
+        loop_var: shell_account
+        label: "{{ shell_account.name }}"
+
+    - name: Prepare defaults for future users
+      when: shell_configure_new_users | bool
+      block:
+        - name: Populate skeleton home
+          ansible.builtin.include_tasks: tasks/home.yml
+          vars:
+            shell_account:
+              name: root
+              group: root
+              home: /etc/skel
+
+        - name: Set adduser default shell
+          ansible.builtin.lineinfile:
+            path: /etc/adduser.conf
+            regexp: '^#?\s*DSHELL='
+            line: 'DSHELL=/bin/zsh'
+            backup: true
+
+        - name: Set useradd default shell
+          ansible.builtin.lineinfile:
+            path: /etc/default/useradd
+            regexp: '^#?\s*SHELL='
+            line: 'SHELL=/bin/zsh'
+            backup: true

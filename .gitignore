@@ -1,0 +1,7 @@
+*.retry
+.venv/
+inventory.local.ini
+/inventory.ini
+__pycache__/
+*.swp
+*.swo

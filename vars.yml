@@ -1,0 +1,14 @@
+---
+# 빈 목록이면 root와 로그인 가능한 일반 로컬 사용자를 자동 선택합니다.
+# 일부 계정만 적용하려면 예: shell_users: [alice, bob]
+shell_users: []
+shell_excluded_users: []
+shell_uid_min: 1000
+shell_uid_max: 60000
+
+# adduser 또는 useradd -m으로 생성할 신규 사용자도 준비합니다.
+shell_configure_new_users: true
+
+starship_version: "1.26.0"
+oh_my_zsh_version: "74965c96098134b192f00084f966b4b02438a739"
+

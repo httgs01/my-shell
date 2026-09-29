@@ -1,0 +1,46 @@
+---
+- name: Ensure home exists without changing existing permissions
+  ansible.builtin.file:
+    path: "{{ shell_account.home }}"
+    state: directory
+    owner: "{{ shell_account.name }}"
+    group: "{{ shell_account.group }}"
+
+- name: Ensure config directory exists
+  ansible.builtin.file:
+    path: "{{ shell_account.home }}/.config"
+    state: directory
+    owner: "{{ shell_account.name }}"
+    group: "{{ shell_account.group }}"
+
+- name: Install Oh My Zsh as the home owner
+  become: true
+  become_user: "{{ shell_account.name }}"
+  environment:
+    HOME: "{{ shell_account.home }}"
+  ansible.builtin.git:
+    repo: https://github.com/ohmyzsh/ohmyzsh.git
+    dest: "{{ shell_account.home }}/.oh-my-zsh"
+    version: "{{ oh_my_zsh_version }}"
+    update: true
+    force: false
+
+- name: Deploy zsh settings with backup
+  ansible.builtin.copy:
+    src: zshrc
+    dest: "{{ shell_account.home }}/.zshrc"
+    owner: "{{ shell_account.name }}"
+    group: "{{ shell_account.group }}"
+    mode: "0644"
+    backup: true
+    validate: /bin/zsh -n %s
+
+- name: Deploy Starship settings with backup
+  ansible.builtin.copy:
+    src: starship.toml
+    dest: "{{ shell_account.home }}/.config/starship.toml"
+    owner: "{{ shell_account.name }}"
+    group: "{{ shell_account.group }}"
+    mode: "0644"
+    backup: true
+

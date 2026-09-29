@@ -1,0 +1,10 @@
+---
+- name: Configure home files
+  ansible.builtin.include_tasks: home.yml
+
+- name: Set login shell
+  ansible.builtin.user:
+    name: "{{ shell_account.name }}"
+    shell: /bin/zsh
+    create_home: false
+
